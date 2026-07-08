@@ -238,8 +238,10 @@ class VyperiaLagSwitch:
         self.auto_reactivate = bool(self.settings.get("auto_reactivate", False))
         self.timer_duration = clamp(float(self.settings.get("timer_duration", 9.8)), 0.5, 10.0)
         self.reactivation_duration = clamp(float(self.settings.get("reactivation_duration", 0.2)), 0.1, 3.0)
-        self.keybind = str(self.settings.get("keybind", DEFAULT_KEYBIND))
+        self.keybind = self.normalize_single_key(str(self.settings.get("keybind", DEFAULT_KEYBIND)))
         self.overlay_font_size = int(clamp(float(self.settings.get("overlay_font_size", 18)), 12, 36))
+        self.overlay_show_keybind = bool(self.settings.get("overlay_show_keybind", False))
+        self.overlay_compact_text = bool(self.settings.get("overlay_compact_text", False))
         self.overlay_on_color_name = str(self.settings.get("overlay_on_color", "Green"))
         self.overlay_off_color_name = str(self.settings.get("overlay_off_color", "Red"))
         if self.overlay_on_color_name not in COLOR_PRESETS:
@@ -256,7 +258,7 @@ class VyperiaLagSwitch:
         self.active_target: Optional[TargetApp] = None
         self.prepared_target_key: Optional[str] = None
         self.current_app_rule_name: Optional[str] = None
-        self.ui_events: queue.Queue[tuple[str, Optional[str]]] = queue.Queue()
+        self.ui_events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.overlay_window: Optional[tk.Toplevel] = None
         self.overlay_label: Optional[tk.Label] = None
         self.is_elevated = self.is_admin()
@@ -463,7 +465,7 @@ class VyperiaLagSwitch:
 
         ctk.CTkButton(
             control_panel,
-            text="Change Hotkey",
+            text="Capture Hotkey",
             command=self.change_keybind,
             fg_color=ACCENT_DARK,
             hover_color=ACCENT_HOVER,
@@ -566,18 +568,42 @@ class VyperiaLagSwitch:
         self.overlay_size_slider.set(self.overlay_font_size)
         self.overlay_size_slider.grid(row=9, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 12))
 
+        self.overlay_show_keybind_var = ctk.BooleanVar(value=self.overlay_show_keybind)
+        ctk.CTkCheckBox(
+            control_panel,
+            text="Show hotkey on overlay",
+            variable=self.overlay_show_keybind_var,
+            command=self.on_overlay_setting_changed,
+            text_color=TEXT,
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
+            border_color=PANEL_BORDER,
+        ).grid(row=10, column=0, sticky="w", padx=16, pady=(0, 8))
+
+        self.overlay_compact_text_var = ctk.BooleanVar(value=self.overlay_compact_text)
+        ctk.CTkCheckBox(
+            control_panel,
+            text="Compact overlay text",
+            variable=self.overlay_compact_text_var,
+            command=self.on_overlay_setting_changed,
+            text_color=TEXT,
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
+            border_color=PANEL_BORDER,
+        ).grid(row=10, column=1, sticky="w", padx=16, pady=(0, 8))
+
         ctk.CTkLabel(
             control_panel,
             text="Overlay ON color",
             text_color=TEXT,
             anchor="w",
-        ).grid(row=10, column=0, sticky="ew", padx=(16, 8), pady=(0, 4))
+        ).grid(row=11, column=0, sticky="ew", padx=(16, 8), pady=(0, 4))
         ctk.CTkLabel(
             control_panel,
             text="Overlay OFF color",
             text_color=TEXT,
             anchor="w",
-        ).grid(row=10, column=1, sticky="ew", padx=(8, 16), pady=(0, 4))
+        ).grid(row=11, column=1, sticky="ew", padx=(8, 16), pady=(0, 4))
 
         self.overlay_on_color_var = ctk.StringVar(value=self.overlay_on_color_name)
         self.overlay_off_color_var = ctk.StringVar(value=self.overlay_off_color_name)
@@ -594,7 +620,7 @@ class VyperiaLagSwitch:
             dropdown_text_color=TEXT,
             text_color=TEXT,
         )
-        self.overlay_on_color_menu.grid(row=11, column=0, sticky="ew", padx=(16, 8), pady=(0, 14))
+        self.overlay_on_color_menu.grid(row=12, column=0, sticky="ew", padx=(16, 8), pady=(0, 14))
         self.overlay_off_color_menu = ctk.CTkOptionMenu(
             control_panel,
             variable=self.overlay_off_color_var,
@@ -608,7 +634,7 @@ class VyperiaLagSwitch:
             dropdown_text_color=TEXT,
             text_color=TEXT,
         )
-        self.overlay_off_color_menu.grid(row=11, column=1, sticky="ew", padx=(8, 16), pady=(0, 14))
+        self.overlay_off_color_menu.grid(row=12, column=1, sticky="ew", padx=(8, 16), pady=(0, 14))
 
         self.timer_label = ctk.CTkLabel(
             control_panel,
@@ -616,7 +642,7 @@ class VyperiaLagSwitch:
             anchor="w",
             text_color=TEXT,
         )
-        self.timer_label.grid(row=12, column=0, columnspan=2, sticky="ew", padx=16)
+        self.timer_label.grid(row=13, column=0, columnspan=2, sticky="ew", padx=16)
         self.timer_slider = ctk.CTkSlider(
             control_panel,
             from_=0.5,
@@ -629,7 +655,7 @@ class VyperiaLagSwitch:
             fg_color=ACCENT_DARK,
         )
         self.timer_slider.set(self.timer_duration)
-        self.timer_slider.grid(row=13, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 12))
+        self.timer_slider.grid(row=14, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 12))
 
         self.reactivation_label = ctk.CTkLabel(
             control_panel,
@@ -637,7 +663,7 @@ class VyperiaLagSwitch:
             anchor="w",
             text_color=TEXT,
         )
-        self.reactivation_label.grid(row=14, column=0, columnspan=2, sticky="ew", padx=16)
+        self.reactivation_label.grid(row=15, column=0, columnspan=2, sticky="ew", padx=16)
         self.reactivation_slider = ctk.CTkSlider(
             control_panel,
             from_=0.1,
@@ -650,7 +676,7 @@ class VyperiaLagSwitch:
             fg_color=ACCENT_DARK,
         )
         self.reactivation_slider.set(self.reactivation_duration)
-        self.reactivation_slider.grid(row=15, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 16))
+        self.reactivation_slider.grid(row=16, column=0, columnspan=2, sticky="ew", padx=16, pady=(0, 16))
 
     def refresh_targets(self) -> None:
         current_target = self.targets.get(self.target_var.get()) if hasattr(self, "target_var") else None
@@ -1017,11 +1043,17 @@ class VyperiaLagSwitch:
         color_name = self.overlay_on_color_var.get() if self.block_flag else self.overlay_off_color_var.get()
         color = COLOR_PRESETS.get(color_name, ON_GREEN if self.block_flag else OFF_RED)
         self.overlay_label.configure(
-            text=f"Vyperia Lag Switch: {state}",
+            text=self.get_overlay_text(state),
             fg=color,
             font=("Segoe UI", self.overlay_font_size, "bold"),
         )
         self.update_overlay_position()
+
+    def get_overlay_text(self, state: str) -> str:
+        text = state if self.overlay_compact_text_var.get() else f"Vyperia Lag Switch: {state}"
+        if self.overlay_show_keybind_var.get():
+            text = f"{text} [{self.keybind.upper()}]"
+        return text
 
     def update_overlay_position(self) -> None:
         if self.overlay_window is None or not self.overlay_window.winfo_exists():
@@ -1085,6 +1117,8 @@ class VyperiaLagSwitch:
             "overlay_enabled": bool(self.overlay_var.get()) if hasattr(self, "overlay_var") else False,
             "overlay_position": self.overlay_position_var.get() if hasattr(self, "overlay_position_var") else "Top Center",
             "overlay_font_size": int(self.overlay_font_size),
+            "overlay_show_keybind": bool(self.overlay_show_keybind_var.get()) if hasattr(self, "overlay_show_keybind_var") else False,
+            "overlay_compact_text": bool(self.overlay_compact_text_var.get()) if hasattr(self, "overlay_compact_text_var") else False,
             "overlay_on_color": self.overlay_on_color_var.get() if hasattr(self, "overlay_on_color_var") else "Green",
             "overlay_off_color": self.overlay_off_color_var.get() if hasattr(self, "overlay_off_color_var") else "Red",
             "timer_duration": round(float(self.timer_duration), 1),
@@ -1128,25 +1162,41 @@ class VyperiaLagSwitch:
     def on_overlay_setting_changed(self) -> None:
         self.overlay_on_color_name = self.overlay_on_color_var.get()
         self.overlay_off_color_name = self.overlay_off_color_var.get()
+        self.overlay_show_keybind = self.overlay_show_keybind_var.get()
+        self.overlay_compact_text = self.overlay_compact_text_var.get()
         self.update_overlay()
         self.save_settings()
 
     def change_keybind(self) -> None:
-        self.keybind_label.configure(text="Press a key...")
-        self.keybind_temp_handler = keyboard.on_press(lambda event: self.ui_events.put(("set_keybind", event.name)))
+        if self.keybind_temp_handler is not None:
+            keyboard.unhook(self.keybind_temp_handler)
+            self.keybind_temp_handler = None
+        self.keybind_label.configure(text="Press one key...")
+        self.keybind_temp_handler = keyboard.on_press(
+            lambda event: self.ui_events.put(("set_keybind", event.name))
+        )
 
     def set_keybind(self, key_name: str) -> None:
-        self.keybind = key_name
-        self.keybind_label.configure(text=f"Hotkey: {self.keybind.upper()}")
+        new_keybind = self.normalize_single_key(key_name)
+        if not new_keybind:
+            self.keybind_label.configure(text=f"Hotkey: {self.keybind.upper()}")
+            return
+        if new_keybind in {"ctrl", "shift", "alt", "windows"}:
+            self.keybind_label.configure(text="Invalid hotkey: choose one normal key")
+            return
+
         if self.keybind_temp_handler is not None:
             keyboard.unhook(self.keybind_temp_handler)
             self.keybind_temp_handler = None
         if self.keybind_handler is not None:
             keyboard.unhook(self.keybind_handler)
-        self.keybind_handler = keyboard.on_press_key(
-            self.keybind,
-            lambda _event: self.ui_events.put(("toggle", None)),
-        )
+            self.keybind_handler = None
+
+        self.keybind = new_keybind
+        self.setup_keybind()
+
+        self.keybind_label.configure(text=f"Hotkey: {self.keybind.upper()}")
+        self.update_overlay()
         self.save_settings()
 
     def setup_keybind(self) -> None:
@@ -1154,6 +1204,27 @@ class VyperiaLagSwitch:
             self.keybind,
             lambda _event: self.ui_events.put(("toggle", None)),
         )
+
+    def normalize_single_key(self, key_name: str) -> str:
+        key = str(key_name).strip().lower()
+        if not key or "+" in key:
+            return DEFAULT_KEYBIND
+        aliases = {
+            "control": "ctrl",
+            "ctl": "ctrl",
+            "cmd": "windows",
+            "win": "windows",
+            "esc": "escape",
+            "leftctrl": "ctrl",
+            "rightctrl": "ctrl",
+            "leftcontrol": "ctrl",
+            "rightcontrol": "ctrl",
+            "leftshift": "shift",
+            "rightshift": "shift",
+            "leftalt": "alt",
+            "rightalt": "alt",
+        }
+        return aliases.get(key, key)
 
     def is_admin(self) -> bool:
         try:

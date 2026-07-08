@@ -16,6 +16,7 @@ RUN THIS:
 
 ```
 python -m pip install pyinstaller
+python -m pip install customtkinter keyboard psutil pillow
 ```
 
 Build the exe from the saved spec file:
