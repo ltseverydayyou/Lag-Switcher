@@ -15,6 +15,7 @@ import subprocess as sp
 import sys
 import tkinter as tk
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -253,6 +254,8 @@ class VyperiaLagSwitch:
         self.icon_cache: dict[str, ctk.CTkImage] = {}
         self.target_rows: list[ctk.CTkButton] = []
         self.active_target: Optional[TargetApp] = None
+        self.prepared_target_key: Optional[str] = None
+        self.current_app_rule_name: Optional[str] = None
         self.ui_events: queue.Queue[tuple[str, Optional[str]]] = queue.Queue()
         self.overlay_window: Optional[tk.Toplevel] = None
         self.overlay_label: Optional[tk.Label] = None
@@ -277,6 +280,8 @@ class VyperiaLagSwitch:
         self.update_status()
         if self.overlay_var.get():
             self.open_overlay()
+        if self.is_elevated:
+            self.root.after(300, self.clear_firewall_rules)
         self.root.after(50, self.process_ui_events)
 
     def set_window_icon(self) -> None:
@@ -840,23 +845,71 @@ class VyperiaLagSwitch:
                 break
 
     def turn_on_lag_switch(self) -> None:
-        self.clear_firewall_rules()
         target = self.active_target or self.get_selected_target()
         if target.exe_path is None:
-            self.add_firewall_rule(SYSTEM_OUT_RULE, "out")
-            self.add_firewall_rule(SYSTEM_IN_RULE, "in")
+            self.prepare_firewall_rules(target)
+            self.enable_firewall_rules(True)
         else:
-            self.add_firewall_rule(APP_OUT_RULE, "out", target.exe_path)
-            self.add_firewall_rule(APP_IN_RULE, "in", target.exe_path)
+            if self.current_app_rule_name:
+                self.delete_firewall_rule(self.current_app_rule_name)
+            self.current_app_rule_name = self.make_app_rule_name(target)
+            self.add_firewall_rule(self.current_app_rule_name, "out", target.exe_path, enable=True)
         self.block_flag = True
         self.update_status()
 
     def turn_off_lag_switch(self) -> None:
-        self.clear_firewall_rules()
+        target = self.active_target or self.get_selected_target()
+        if target.exe_path is None:
+            self.enable_firewall_rules(False)
+        else:
+            if self.current_app_rule_name:
+                self.delete_firewall_rule(self.current_app_rule_name)
+                self.current_app_rule_name = None
         self.block_flag = False
         self.update_status()
 
-    def add_firewall_rule(self, name: str, direction: str, exe_path: Optional[str] = None) -> None:
+    def get_target_key(self, target: TargetApp) -> str:
+        return target.exe_path.lower() if target.exe_path else "__whole_system__"
+
+    def make_app_rule_name(self, target: TargetApp) -> str:
+        pid_part = target.pid if target.pid is not None else "app"
+        return f"{APP_OUT_RULE}_{pid_part}_{int(time.time() * 1000)}"
+
+    def prepare_firewall_rules(self, target: TargetApp) -> None:
+        if not self.is_elevated:
+            return
+        target_key = self.get_target_key(target)
+        if self.prepared_target_key == target_key:
+            return
+
+        self.clear_firewall_rules()
+        if target.exe_path is None:
+            self.add_firewall_rule(SYSTEM_OUT_RULE, "out", enable=False)
+            self.add_firewall_rule(SYSTEM_IN_RULE, "in", enable=False)
+        else:
+            self.add_firewall_rule(APP_OUT_RULE, "out", target.exe_path, enable=False)
+            self.add_firewall_rule(APP_IN_RULE, "in", target.exe_path, enable=False)
+        self.prepared_target_key = target_key
+
+    def enable_firewall_rules(self, enabled: bool) -> None:
+        if not self.is_elevated or self.prepared_target_key is None:
+            return
+        state = "yes" if enabled else "no"
+        for rule_name in self.get_prepared_rule_names():
+            sp.Popen(
+                ["netsh", "advfirewall", "firewall", "set", "rule", f"name={rule_name}", "new", f"enable={state}"],
+                creationflags=sp.CREATE_NO_WINDOW,
+                stdout=sp.DEVNULL,
+                stderr=sp.DEVNULL,
+            )
+
+    def get_prepared_rule_names(self) -> tuple[str, str]:
+        target = self.active_target or self.get_selected_target()
+        if target.exe_path is None:
+            return SYSTEM_OUT_RULE, SYSTEM_IN_RULE
+        return APP_OUT_RULE, APP_IN_RULE
+
+    def add_firewall_rule(self, name: str, direction: str, exe_path: Optional[str] = None, enable: bool = True) -> None:
         if not self.is_elevated:
             return
         cmd = [
@@ -868,22 +921,37 @@ class VyperiaLagSwitch:
             f"name={name}",
             f"dir={direction}",
             "action=block",
-            "enable=yes",
+            f"enable={'yes' if enable else 'no'}",
         ]
         if exe_path:
             cmd.append(f"program={exe_path}")
         sp.run(cmd, creationflags=sp.CREATE_NO_WINDOW, capture_output=True, text=True)
 
+    def delete_firewall_rule(self, name: str) -> None:
+        if not self.is_elevated:
+            return
+        sp.run(
+            ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}"],
+            creationflags=sp.CREATE_NO_WINDOW,
+            capture_output=True,
+            text=True,
+        )
+
     def clear_firewall_rules(self) -> None:
         if not self.is_elevated:
             return
-        for rule_name in (SYSTEM_OUT_RULE, SYSTEM_IN_RULE, APP_OUT_RULE, APP_IN_RULE):
+        rule_names = [SYSTEM_OUT_RULE, SYSTEM_IN_RULE, APP_OUT_RULE, APP_IN_RULE]
+        if self.current_app_rule_name:
+            rule_names.append(self.current_app_rule_name)
+        for rule_name in rule_names:
             sp.run(
                 ["netsh", "advfirewall", "firewall", "delete", "rule", f"name={rule_name}"],
                 creationflags=sp.CREATE_NO_WINDOW,
                 capture_output=True,
                 text=True,
             )
+        self.prepared_target_key = None
+        self.current_app_rule_name = None
 
     def update_status(self) -> None:
         if threading.get_ident() != self.ui_thread_id:
