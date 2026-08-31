@@ -7,4 +7,13 @@
         <item name="android:colorAccent">#A855F7</item>
         <item name="android:windowBackground">#100B16</item>
     </style>
+
+    <style name="Theme.VyperiaLagSwitch.Transparent" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:colorAccent">#A855F7</item>
+    </style>
 </resources>
