@@ -36,11 +36,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view android-v1.0.0 >/dev/null 2>&1; then
-            gh release upload android-v1.0.0 VyperiaLagSwitch-Android.apk --clobber
+          if gh release view android-v1.0.1 >/dev/null 2>&1; then
+            gh release upload android-v1.0.1 VyperiaLagSwitch-Android.apk --clobber
           else
-            gh release create android-v1.0.0 VyperiaLagSwitch-Android.apk \
+            gh release create android-v1.0.1 VyperiaLagSwitch-Android.apk \
               --target "$GITHUB_SHA" \
-              --title "Android v1.0.0" \
-              --notes "First Android release of Vyperia Lag Switch. Uses Android VpnService to blackhole network packets without disabling Wi-Fi or mobile data. Includes whole-system and per-app targeting, draggable floating overlay controls, anti-timeout cycling, reactivate-after-pause, configurable active/pause durations, compact overlay mode, position, size, ON/OFF colors, and notification quick toggle. No root required. Android only permits one ordinary VpnService at a time, so this build cannot run alongside another VPN app."
+              --title "Android v1.0.1" \
+              --notes "Android v1.0.1 fixes the missing launcher icon, makes the floating overlay request Android VPN permission when needed, clamps the draggable overlay inside the current screen in portrait and landscape, and renders installed app icons in the Target selector. Includes whole-system/per-app packet blackholing, anti-timeout cycling, pause/reactivation controls, overlay customization, and notification quick toggle."
           fi

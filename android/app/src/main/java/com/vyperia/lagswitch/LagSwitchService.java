@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -20,6 +21,8 @@ import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.view.WindowMetrics;
+import android.util.DisplayMetrics;
 import android.widget.Button;
 
 import java.io.FileInputStream;
@@ -103,6 +106,12 @@ public class LagSwitchService extends VpnService {
         if (prefs.getBoolean("overlay_enabled", false) && Settings.canDrawOverlays(this)) {
             showOverlay();
         }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        handler.postDelayed(this::clampOverlayToScreen, 80L);
     }
 
     @Override
@@ -290,7 +299,7 @@ public class LagSwitchService extends VpnService {
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                 PixelFormat.TRANSLUCENT
         );
         overlayParams.gravity = Gravity.TOP | Gravity.START;
@@ -322,6 +331,7 @@ public class LagSwitchService extends VpnService {
                         if (moved) {
                             overlayParams.x = startX + Math.round(dx);
                             overlayParams.y = startY + Math.round(dy);
+                            clampOverlayCoordinates();
                             try { windowManager.updateViewLayout(overlay, overlayParams); } catch (Exception ignored) {}
                         }
                         return true;
@@ -334,7 +344,7 @@ public class LagSwitchService extends VpnService {
                                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                             startActivity(open);
                         } else {
-                            toggleRequestedState();
+                            requestToggleFromOverlay();
                         }
                         return true;
                 }
@@ -344,6 +354,7 @@ public class LagSwitchService extends VpnService {
 
         try {
             windowManager.addView(overlay, overlayParams);
+            overlay.post(this::clampOverlayToScreen);
         } catch (Exception e) {
             overlay = null;
         }
@@ -388,8 +399,49 @@ public class LagSwitchService extends VpnService {
         if (paused) colorName = "Yellow";
         overlay.setBackgroundTintList(android.content.res.ColorStateList.valueOf(colorFor(colorName)));
         if (windowManager != null && overlayParams != null) {
-            try { windowManager.updateViewLayout(overlay, overlayParams); } catch (Exception ignored) {}
+            overlay.post(this::clampOverlayToScreen);
         }
+    }
+
+    private void requestToggleFromOverlay() {
+        Intent prepare = VpnService.prepare(this);
+        if (prepare != null) {
+            Intent permission = new Intent(this, VpnPermissionActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+            startActivity(permission);
+        } else {
+            toggleRequestedState();
+        }
+    }
+
+    private void clampOverlayToScreen() {
+        if (overlay == null || overlayParams == null || windowManager == null) return;
+        clampOverlayCoordinates();
+        try { windowManager.updateViewLayout(overlay, overlayParams); } catch (Exception ignored) {}
+        prefs.edit().putInt("overlay_x", overlayParams.x).putInt("overlay_y", overlayParams.y).apply();
+    }
+
+    private void clampOverlayCoordinates() {
+        if (overlay == null || overlayParams == null || windowManager == null) return;
+        int screenWidth;
+        int screenHeight;
+        if (Build.VERSION.SDK_INT >= 30) {
+            WindowMetrics metrics = windowManager.getCurrentWindowMetrics();
+            screenWidth = metrics.getBounds().width();
+            screenHeight = metrics.getBounds().height();
+        } else {
+            DisplayMetrics metrics = new DisplayMetrics();
+            windowManager.getDefaultDisplay().getRealMetrics(metrics);
+            screenWidth = metrics.widthPixels;
+            screenHeight = metrics.heightPixels;
+        }
+        int width = overlay.getWidth() > 0 ? overlay.getWidth() : dp(120);
+        int height = overlay.getHeight() > 0 ? overlay.getHeight() : dp(56);
+        int margin = dp(4);
+        int maxX = Math.max(margin, screenWidth - width - margin);
+        int maxY = Math.max(margin, screenHeight - height - margin);
+        overlayParams.x = Math.max(margin, Math.min(overlayParams.x, maxX));
+        overlayParams.y = Math.max(margin, Math.min(overlayParams.y, maxY));
     }
 
     private void removeOverlay() {
@@ -433,8 +485,14 @@ public class LagSwitchService extends VpnService {
     private Notification buildNotification() {
         Intent openIntent = new Intent(this, MainActivity.class);
         PendingIntent openPending = PendingIntent.getActivity(this, 1, openIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Intent toggleIntent = new Intent(this, LagSwitchService.class).setAction(ACTION_TOGGLE);
-        PendingIntent togglePending = PendingIntent.getService(this, 2, toggleIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent togglePending;
+        if (!requestedActive && VpnService.prepare(this) != null) {
+            Intent permissionIntent = new Intent(this, VpnPermissionActivity.class);
+            togglePending = PendingIntent.getActivity(this, 2, permissionIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        } else {
+            Intent toggleIntent = new Intent(this, LagSwitchService.class).setAction(ACTION_TOGGLE);
+            togglePending = PendingIntent.getService(this, 2, toggleIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        }
         String target = prefs == null ? "Whole System" : prefs.getString("target_label", "Whole System");
         String state = paused ? "Cycle pause" : tunnelActive ? "Lag ON" : "Lag OFF";
         return new Notification.Builder(this, CHANNEL_ID)
